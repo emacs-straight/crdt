@@ -1,0 +1,156 @@
+* Algorithm
+
+Background reading: [[https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type][CRDT]]
+
+This packages implements the Logoot split algorithm
+~André, Luc, et al. "Supporting adaptable granularity of changes for massive-scale collaborative editing." 9th IEEE International Conference on Collaborative Computing: Networking, Applications and Worksharing. IEEE, 2013.~
+    
+The CRDT-ID blocks are implemented by text property ='crdt-id=. A continous range of text with the same ='crdt-id'= property represent a CRDT-ID block. The ='crdt-id= is a a cons of =(ID-STRING . END-OF-BLOCK-P)=, where
+=ID-STRING= represent the CRDT-ID of the leftmost character in the block. If =END-OF-BLOCK-P= is =NIL=, the block is a non-rightmost segment splitted from a larger block, so insertion at the right of this block shouldn't be merged into the block by sharing the base CRDT-ID and increasing offset.
+
+=ID-STRING= is a unibyte string representing a CRDT-ID (for efficient comparison).
+Every two bytes represent a big endian encoded integer.
+For base IDs, last two bytes are always representing site ID.
+Stored strings are BASE-ID:OFFSETs. So the last two bytes represent offset,
+and second last two bytes represent site ID.
+
+* Protocol
+
+  Text-based version
+  (it should be easy to migrate to a binary version.  Using text for better debugging for now)
+
+  Every message takes the form =(type . body)=
+
+  - Text Editing
+    + insert ::
+      body takes the form =(buffer-name crdt-id position-hint content)=
+      - =position-hint= is the buffer position where the operation happens at the site
+        which generates the operation.  Then we can play the trick that start search
+        near this position at other sites to speedup CRDT ID search
+      - =content= is the string to be inserted
+
+    + delete ::
+      body takes the form =(buffer-name position-hint (crdt-id . length)*)=
+
+  - Peer State
+    + cursor ::
+      body takes the form
+           =(buffer-name site-id point-position-hint point-crdt-id mark-position-hint mark-crdt-id)=
+      =*-crdt-id= can be either a CRDT ID, or
+        - =nil=, which means clear the point/mark
+        - =""=, which means =(point-max)=
+
+    + contact ::
+      body takes the form
+           =(site-id name address port)=
+      when name is =nil=, clear the contact for this =site-id=
+
+    + focus ::
+      body takes the form =(site-id buffer-name)=
+
+  - Login
+    + hello ::
+      This message is sent from client to server, when a client connect to the server.
+      body takes the form =(client-name &optional response)=
+
+    + leave ::
+      This message is sometime sent from client to server to indicate disconnection, 
+      if the underlying proxy doesn't handle it properly.
+      body takes the form =()=
+
+    + challenge ::
+      body takes the form =(salt)=
+
+    + login ::
+      It's always sent after server receives a hello message.
+      Assigns an ID to the client
+      body takes the form =(site-id session-name)=.
+
+  - Initial Synchronization
+    + sync ::
+      This message is sent from server to client to get it sync to the state on the server.
+      Might be used for error recovery or other optimization in the future.
+      One optimization I have in mind is let server try to merge all CRDT item into a single
+      one and try to synchronize this state to clients at best effort.
+      body takes the form =(buffer-name . crdt-id-list)=
+      - =crdt-id-list= is generated from =CRDT--DUMP-IDS=
+
+    + ready ::
+      body takes the form =(buffer-name major-mode-symbol)=
+      Indicates the end of a batch of synchronization messages
+      (which usually contains some =cursor= messages, a =sync= message,
+      and some =overlay-*= messages).
+      The client should now try to enable =major-mode-symbol= in the
+      synchronized buffer.
+
+  - Buffer Service
+    + add ::
+      Indicates that the server has started sharing some buffers.
+      body takes the form =buffer-name-list=
+
+    + remove ::
+      Indicates that the server has stopped sharing some buffers.
+      body takes the form =buffer-name-list=
+
+    + get ::
+      Request the server to resend =sync= message for a buffer.
+      body takes the form =(buffer-name)=
+
+  - Overlay Synchronization
+    + overlay-add ::
+      body takes the form 
+      #+BEGIN_SRC
+      (buffer-name site-id logical-clock species
+        front-advance rear-advance
+        start-position-hint start-crdt-id
+        end-position-hint end-crdt-id)
+      #+END_SRC
+
+    + overlay-move ::
+      body takes the form
+      #+BEGIN_SRC
+      (buffer-name site-id logical-clock
+        start-position-hint start-crdt-id
+        end-position-hint end-crdt-id)
+      #+END_SRC
+
+    + overlay-put ::
+      body takes the form =(buffer-name site-id logical-clock prop value)=
+
+    + overlay-remove ::
+      body takes the form =(buffer-name site-id logical-clock)=
+
+  - Remote Buffer Process
+    + process ::
+      body takes the form =(buffer-name string)=
+      Sent from client to server, request sending =string= 
+      to the process buffer associated to =buffer-name=.
+
+    + process-mark ::
+      body takes the form =(buffer-name crdt-id position-hint)=.
+
+NOTE: for =overlay-put=, =overlay-move= and =process-mark=, server must also broadcast the message
+      *back to the client that generated it*, to ensure consistent global history.
+
+* Emacs as a collaborative operating system
+
+The goal: With a few annotations, developer should be able to make any Emacs application 
+collaboration-powered. Emacs should be one of the most powerful collaboration platforms.
+
+How: There're plenty of Emacs applications centered around the buffer and buffer-local-variables.
+By implementing synchronization primitives for all components in a buffer,
+pretty much everything can be made collaborative.
+Synchronize arbitrary buffer-local-variable reasonably is hard, but user annotations can help.
+
+** TODO list
+   - [X] synchronize buffer text (insert/delete)
+   - [X] synchronize overlays
+   - [-] synchronize major/minor modes
+     + [X] initial synchronization of major modes
+     + [ ] toggle minor modes on the fly
+     + [ ] change major modes on the fly
+   - [ ] set of synchronization primitives for buffer local variables
+     + [ ] server dictated
+     + [ ] a library of CRDTs
+   - [ ] synchronize text properties (any use case for this?)
+   - [ ] synchronize markers (any use case for this?)
