@@ -2596,14 +2596,17 @@ The result DIFF can be used in (CRDT--NAPPLY-DIFF OLD DIFF) to reproduce NEW."
 (cl-defun crdt--send-process-mark-maybe (&optional (lazy t))
   (let ((buffer-process (get-buffer-process (current-buffer))))
     (when buffer-process
-      (let* ((mark-pos (marker-position (process-mark buffer-process)))
-             (current-id (crdt--get-id mark-pos)))
-        (unless (and lazy (string-equal crdt--last-process-mark-id current-id))
-          (setq crdt--last-process-mark-id current-id)
-          (crdt--broadcast-maybe
-           (crdt--format-message
-            `(process-mark ,crdt--buffer-network-name
-                           ,current-id ,mark-pos))))))))
+      (let* ((mark (process-mark buffer-process)))
+        (when mark
+          (let* ((mark-pos (marker-position mark)))
+            (when mark-pos
+              (let* ((current-id (crdt--get-id mark-pos)))
+                (unless (and lazy (string-equal crdt--last-process-mark-id current-id))
+                  (setq crdt--last-process-mark-id current-id)
+                  (crdt--broadcast-maybe
+                   (crdt--format-message
+                    `(process-mark ,crdt--buffer-network-name
+                                   ,current-id ,mark-pos))))))))))))
 
 (defun crdt--process-status-advice (orig-func process)
   (if (crdt--pseudo-process-p process)
