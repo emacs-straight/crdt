@@ -6,7 +6,7 @@ This packages implements the Logoot split algorithm
 ~André, Luc, et al. "Supporting adaptable granularity of changes for massive-scale collaborative editing." 9th IEEE International Conference on Collaborative Computing: Networking, Applications and Worksharing. IEEE, 2013.~
     
 The CRDT-ID blocks are implemented by text property ='crdt-id=. 
-A continous range of text with the same ='crdt-id'= property represent a CRDT-ID block. 
+A continous range of text with the same ='crdt-id= property represent a CRDT-ID block. 
 The ='crdt-id= is a a cons of =(ID-STRING . END-OF-BLOCK-P)=, 
 where =ID-STRING= represent the CRDT-ID of the leftmost character in the block.
 If =END-OF-BLOCK-P= is =NIL=, the block is a non-rightmost segment splitted from a larger block,
@@ -14,62 +14,68 @@ so insertion at the right of this block shouldn't be merged into the block by sh
 
 =ID-STRING= is a unibyte string representing a CRDT-ID (for efficient comparison).
 Every two bytes represent a big endian encoded integer.
-For base IDs, last two bytes are always representing site ID.
+For base IDs, last two bytes are always representing Site ID.
 Stored strings are BASE-ID:OFFSETs. So the last two bytes represent offset,
-and second last two bytes represent site ID.
+and second last two bytes represent Site ID.
 
 * Protocol
 
-  Text-based version
-  (it should be easy to migrate to a binary version.  Using text for better debugging for now)
+Text-based version
+(it should be easy to migrate to a binary version.  Using text for better debugging for now)
 
-  Every message takes the form =(type . body)=
+Note: Starting from =v0.3.0=, we separate /User IDs/ and /Site IDs/. 
+Site IDs are /buffer local/ and temporarily assigned to users with writable access.
+
+Every message takes the form =(type . body)=
 
   - Text Editing
+    A peer must obtain a =site-id= before performing the following operations,
+    by remote calling =crdt-get-write-access=. See [[Remote Function]].
     + insert ::
-      body takes the form =(buffer-name crdt-id position-hint content)=
+      body takes the form =(buffer-name user-id crdt-id position-hint content)=
       - =position-hint= is the buffer position where the operation happens at the site
         which generates the operation.  Then we can play the trick that start search
         near this position at other sites to speedup CRDT ID search
       - =content= is the string to be inserted
 
     + delete ::
-      body takes the form =(buffer-name position-hint . crdt-id-list)=
+      body takes the form =(buffer-name user-id position-hint . crdt-id-list)=
       - =crdt-id-list= is generated from =CRDT--DUMP-IDS= from the deleted text
 
-  - Peer State
     + cursor ::
       body takes the form
-           =(buffer-name site-id point-position-hint point-crdt-id mark-position-hint mark-crdt-id)=
+           =(buffer-name user-id point-position-hint point-crdt-id mark-position-hint mark-crdt-id)=
       =*-crdt-id= can be either a CRDT ID, or
-        - =nil=, which means clear the point/mark
-        - =""=, which means =(point-max)=
+      - =nil=, which means clear the point/mark
+      - =""=, which means =(point-max)=
+  
+  - Contact information
 
     + contact ::
-      body takes the form
-           =(site-id name address port)=
-      when name is =nil=, clear the contact for this =site-id=
+      body takes the form =(user-id slot value)=
+      - =slot= can be one of
+        #+BEGIN_SRC emacs-lisp
+          name host service focus
+        #+END_SRC
 
-    + focus ::
-      body takes the form =(site-id buffer-name)=
+    + leave ::
+      body takes the form =(user-id)=
+      
+      This message is sometime sent from client to server to indicate disconnection, 
+      if the underlying proxy doesn't indicate disconnection properly.
 
   - Login
     + hello ::
       This message is sent from client to server, when a client connect to the server.
-      body takes the form =(client-name protocol-version &optional response)=
-
-    + leave ::
-      This message is sometime sent from client to server to indicate disconnection, 
-      if the underlying proxy doesn't handle it properly.
-      body takes the form =()=
+      body takes the form =(protocol-version &optional response)=
 
     + challenge ::
       body takes the form =(salt)=
 
     + login ::
       It's always sent after server receives a hello message.
-      Assigns an ID to the client
-      body takes the form =(site-id session-name)=.
+      Assigns a User ID to the client
+      body takes the form =(user-id)=.
 
   - Initial Synchronization
     + sync ::
@@ -97,6 +103,9 @@ and second last two bytes represent site ID.
       This message is sent from server to client to notice that some messages from the
       client is not processed due to error =(error-symbol . error-datum)=.
       Normally client should follow initial synchronization procedure to reinitialize the buffer.
+      - =buffer-name= can also be =nil=, which signifies that it's a session error.
+        The only reasonable thing to do is to disconnect in this scenario.
+        Currently, this happens when client/server protocol version doesn't match.
 
   - Buffer Service
     + add ::
@@ -115,7 +124,7 @@ and second last two bytes represent site ID.
     + overlay-add ::
       body takes the form 
       #+BEGIN_SRC
-      (buffer-name site-id logical-clock species
+      (buffer-name user-id logical-clock species
         front-advance rear-advance
         start-position-hint start-crdt-id
         end-position-hint end-crdt-id)
@@ -124,40 +133,49 @@ and second last two bytes represent site ID.
     + overlay-move ::
       body takes the form
       #+BEGIN_SRC
-      (buffer-name site-id logical-clock
+      (buffer-name user-id logical-clock
         start-position-hint start-crdt-id
         end-position-hint end-crdt-id)
       #+END_SRC
 
     + overlay-put ::
-      body takes the form =(buffer-name site-id logical-clock prop value)=
+      body takes the form =(buffer-name user-id logical-clock prop value)=
 
     + overlay-remove ::
-      body takes the form =(buffer-name site-id logical-clock)=
+      body takes the form =(buffer-name user-id logical-clock)=
 
-  - Remote Command
-    + command ::
+  - <<Remote Function>>
+    + fcap ::
+      body takes the form =(fcap-symbol nonce in-states out-states . interactive-form)=
+      This grants a "functional capability" to a peer.
+      Nonce is a random number to prevent forging capability.
+      - =in-states= is a list of state symbols that the function depends on.
+        =out-states= is a list of state symbols that the function modifies and should be synchronized
+        to the caller.
+        See [[Allowed state symbols]].
+
+    + funcall ::
       body takes the form
       #+BEGIN_SRC
-      (buffer-name spawn-site-id
-       site-id logical-clock state-list
-       command-symbol . args)
+      (user-id logical-clock spawn-user-id 
+        state-list nonce fcap-symbol . args)
       #+END_SRC
-       - =spawn-site-id= represents the site where the interactive command is originally invoked
-         + It can be different from =site-id= because a remote command can call a remote command!
-           This is especially useful when client makes a remote call, 
-           but the call on the server request some interactive input,
-           and such interactive call are remote-called back into the client.
-       - =state-list= is an alist of bindings.
-        (except that we use 1 element list for the CDRs, to save a dot in the serialized string)
-        (CDRs can also be 2 element list of the form =(crdt-id pos-hint)=)
-        Allowed symbols are 
-        #+BEGIN_SRC
-        point mark mark-active transient-mark-mode last-command-event
-        #+END_SRC
+      - =spawn-user-id= represents the site where the interactive command is originally invoked
+        + It can be different from =user-id= because a remote function can call a remote function!
+          This is especially useful when client makes a remote call, 
+          but the call on the server request some interactive input,
+          and such interactive call are remote-called back into the client.
+      - =state-list= is an alist of bindings.
+       (except that we use 1 element list for the CDRs, to save a dot in the serialized string)
+       (CDRs can also be 2 element list of the form =(crdt-id pos-hint)=)
+       <<Allowed state symbols>> are 
+       #+BEGIN_SRC
+       window window-point buffer buffer-content point
+       mark mark-active transient-mark-mode last-command-event
+       #+END_SRC
 
     + return ::
-      body takes the form =(site-id logical-clock state-list success-p . return-values)=
+      body takes the form =(user-id logical-clock state-list success-p . return-values)=
 
   - Buffer local variables
     + var :: body takes the form =(buffer-name variable-symbol . args)=
@@ -310,20 +328,17 @@ Q: What if Emacs GCs?
     + delete :: body takes the form =(buffer-name position length)=
 
   - Peer State
-    + cursor :: body takes the form =(buffer-name site-id point-position mark-position)=
+    + cursor :: body takes the form =(buffer-name user-id point-position mark-position)=
       =*-position= can be either an integer, or
         - =nil=, which means clear the point/mark
 
     + contact :: same as primary protocol.
-
-    + focus :: same as primary protocol.
+    + leave :: same as primary protocol.
 
   - Login
     Note that we don't include challenge/response authentication mecahnism.
 
     + hello :: same as primary protocol.
-    + leave :: same as primary protocol.
-
     + login :: same as primary protocol.
 
   - Initial Synchronization
