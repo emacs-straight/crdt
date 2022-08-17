@@ -6,7 +6,7 @@
 ;; Maintainer: Qiantan Hong <qhong@alum.mit.edu>
 ;; URL: https://code.librehq.com/qhong/crdt.el
 ;; Keywords: collaboration crdt
-;; Version: 0.3.0
+;; Version: 0.3.1
 
 ;; This file is part of GNU Emacs.
 
@@ -38,7 +38,7 @@
 (require 'nadvice)
 (require 'gnutls)
 
-(defconst crdt-version "0.3.0")
+(defconst crdt-version "0.3.1")
 (defconst crdt-protocol-version "0.3.0")
 
 (defun crdt-version (&optional message)
