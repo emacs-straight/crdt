@@ -6,7 +6,7 @@
 ;; Maintainer: Qiantan Hong <qhong@alum.mit.edu>
 ;; URL: https://code.librehq.com/qhong/crdt.el
 ;; Keywords: collaboration crdt
-;; Version: 0.3.1
+;; Version: 0.3.2
 
 ;; This file is part of GNU Emacs.
 
@@ -38,7 +38,7 @@
 (require 'nadvice)
 (require 'gnutls)
 
-(defconst crdt-version "0.3.1")
+(defconst crdt-version "0.3.2")
 (defconst crdt-protocol-version "0.3.0")
 
 (defun crdt-version (&optional message)
@@ -2350,7 +2350,8 @@ Each element should be one of
                            :host "0.0.0.0"
                            :service port
                            :filter #'crdt--network-filter
-                           :sentinel #'crdt--server-process-sentinel))
+                           :sentinel #'crdt--server-process-sentinel
+                           :coding 'utf-8))
          (new-session
           (crdt--make-session :local-id 0
                               :local-clock 0
@@ -2520,6 +2521,7 @@ Join with DISPLAY-NAME."
                                                :buffer (generate-new-buffer " *crdt-client*")
                                                :filter #'crdt--network-filter
                                                :sentinel #'crdt--client-process-sentinel
+                                               :coding 'utf-8
                                                process-args)))
                   (setf (crdt--session-urlstr new-session) (url-recreate-url url)
                         (crdt--session-network-process new-session) network-process)
@@ -2812,6 +2814,25 @@ Join with DISPLAY-NAME."
                 (push (car entry) vars)
                 (push (crdt--readable-decode (cadr entry)) vals))))
     (cons vars vals)))
+
+(defun crdt-toggle-override-command ()
+  "Toggle whether to override local commands with remote commands."
+  (interactive)
+  (if crdt-override-command
+      (progn
+        (setq crdt-override-command nil)
+        (dolist (session crdt--session-list)
+          (maphash (lambda (fcap-symbol _)
+                     (advice-remove fcap-symbol 'crdt-remote-fcap))
+                   (crdt--session-remote-fcap-table session))))
+      (setq crdt-override-command t)
+      (dolist (session crdt--session-list)
+        (maphash (lambda (fcap-symbol _)
+                   (advice-add fcap-symbol :around (crdt--make-remote-command-advice fcap-symbol)
+                               '((name . crdt-remote-fcap))))
+                 (crdt--session-remote-fcap-table session))))
+  (message "Overriding remote command %s"
+           (if crdt-override-command "enabled" "disabled")))
 
 (define-crdt-message-handler fcap
     (fcap-symbol nonce in-states out-states &rest interactive-form)
