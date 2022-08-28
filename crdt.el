@@ -834,14 +834,26 @@ Directly return the buffer network name under point if in the buffer menu."
       (crdt--read-buffer session)
       (signal 'quit nil)))
 
+(defun crdt--do-to-buffer (session network-name f)
+  "Apply F to buffer with SESSION and NETWORK-NAME."
+  (let ((crdt--session session))
+    (crdt--with-buffer-name-pull (network-name)
+      (funcall f (current-buffer)))))
+
 (defun crdt-switch-to-buffer-other-window (session network-name)
-  "Open buffer with NETWORK-NAME in SESSION."
+  "From the buffer list menu, open buffer with NETWORK-NAME in SESSION."
   (interactive
    (let ((session (crdt--read-session-maybe)))
      (list session (crdt--read-buffer-maybe session))))
-  (let ((crdt--session session))
-    (crdt--with-buffer-name-pull (network-name)
-      (switch-to-buffer-other-window (current-buffer)))))
+  (crdt--do-to-buffer session network-name #'switch-to-buffer-other-window))
+
+(defun crdt-switch-to-buffer (session network-name)
+  "Switch to buffer with NETWORK-NAME in SESSION."
+  (interactive
+   (let* ((session (crdt--read-session-maybe))
+          (buffers (hash-table-keys (crdt--session-buffer-table session))))
+     (list session (completing-read "Choose a buffer: " buffers nil t))))
+  (crdt--do-to-buffer session network-name #'switch-to-buffer))
 
 (defvar crdt-buffer-menu-mode-map
   (let ((map (make-sparse-keymap)))
