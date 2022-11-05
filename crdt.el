@@ -6,7 +6,7 @@
 ;; Maintainer: Qiantan Hong <qhong@alum.mit.edu>
 ;; URL: https://code.librehq.com/qhong/crdt.el
 ;; Keywords: collaboration crdt
-;; Version: 0.3.3
+;; Version: 0.3.4
 
 ;; This file is part of GNU Emacs.
 
@@ -2362,6 +2362,7 @@ Each element should be one of
                            :host "0.0.0.0"
                            :service port
                            :filter #'crdt--network-filter
+                           :filter-multibyte nil
                            :sentinel #'crdt--server-process-sentinel
                            :coding 'utf-8))
          (new-session
@@ -2532,6 +2533,7 @@ Join with DISPLAY-NAME."
                                                :name "CRDT Client"
                                                :buffer (generate-new-buffer " *crdt-client*")
                                                :filter #'crdt--network-filter
+                                               :filter-multibyte nil
                                                :sentinel #'crdt--client-process-sentinel
                                                :coding 'utf-8
                                                process-args)))
