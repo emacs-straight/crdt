@@ -6,7 +6,7 @@
 ;; Maintainer: Qiantan Hong <qhong@alum.mit.edu>
 ;; URL: https://code.librehq.com/qhong/crdt.el
 ;; Keywords: collaboration crdt
-;; Version: 0.3.4
+;; Version: 0.3.5
 
 ;; This file is part of GNU Emacs.
 
@@ -38,7 +38,7 @@
 (require 'nadvice)
 (require 'gnutls)
 
-(defconst crdt-version "0.3.3")
+(defconst crdt-version "0.3.5")
 (defconst crdt-protocol-version "0.3.0")
 
 (defun crdt-version (&optional message)
@@ -2389,10 +2389,23 @@ Each element should be one of
                                 "-C" ,(expand-file-name crdt-tuntox-key-path)
                                 "-f" "/dev/stdin" ; do the filtering for safety sake
                                 ,@ (when password-p
-                                     `("-s" ,password))))))
+                                     `("-s" ,password)))
+                              :filter
+                              (lambda (proc string)
+                                (cond
+                                 ((string-match "An UDP connection has been established" string) (message "Connected to Tuntox network."))
+                                 ((string-match "Lost connection to server" string) (warn "Lost connection to Tuntox network!")))
+                                (when (buffer-live-p (process-buffer proc))
+                                  (with-current-buffer (process-buffer proc)
+                                    (let ((moving (= (point) (process-mark proc))))
+                                      (save-excursion
+                                        (goto-char (process-mark proc))
+                                        (insert string)
+                                        (set-marker (process-mark proc) (point)))
+                                      (if moving (goto-char (process-mark proc))))))))))
+          (message "Connecting to Tuntox network...")
           (when password-p
             (process-put proxy-process 'password password))
-          (display-buffer (process-buffer proxy-process))
           (process-put network-process 'tuntox-process proxy-process)
           (process-send-string proxy-process (format "127.0.0.1:%s\n" port)) ; only allow connection to our port
           (process-send-eof proxy-process))
@@ -2578,33 +2591,36 @@ Join with DISPLAY-NAME."
                    (password (or (when (url-filename url)
                                    (cadr (split-string (url-filename url) "?pwd=")))
                                  (read-passwd "tuntox password (empty for no password): "))))
-               (switch-to-buffer-other-window
-                (process-buffer
-                 (make-process
-                  :name "Tuntox Proxy"
-                  :buffer (generate-new-buffer "*Tuntox Proxy*")
-                  :command
-                  `(,crdt-tuntox-executable
-                    "-i" ,(url-host url)
-                    "-L" ,(format "%s:127.0.0.1:%s" port (url-portspec url))
-                    ,@ (when (> (length password) 0)
-                         `("-s" ,password)))
-                  :filter
-                  (let (initialized)
-                    (lambda (proc string)
-                      (when (buffer-live-p (process-buffer proc))
-                        (with-current-buffer (process-buffer proc)
-                          (let ((moving (= (point) (process-mark proc))))
-                            (save-excursion
-                              (goto-char (process-mark proc))
-                              (insert string)
-                              (set-marker (process-mark proc) (point))
-                              (unless initialized
-                                (when (ignore-errors (search-backward "Friend request accepted"))
-                                  (setq initialized t)
-                                  (process-put (start-session :host "127.0.0.1" :service port)
-                                               'tuntox-process proc))))
-                            (if moving (goto-char (process-mark proc)))))))))))
+               (message "Connecting to Tuntox network...")
+               (make-process
+                :name "Tuntox Proxy"
+                :buffer (generate-new-buffer "*Tuntox Proxy*")
+                :command
+                `(,crdt-tuntox-executable
+                  "-i" ,(url-host url)
+                  "-L" ,(format "%s:127.0.0.1:%s" port (url-portspec url))
+                  ,@ (when (> (length password) 0)
+                       `("-s" ,password)))
+                :filter
+                (let (initialized)
+                  (lambda (proc string)
+                    (cond
+                     ((string-match "An UDP connection has been established" string) (message "Connected to Tuntox network, finding host..."))
+                     ((string-match "Lost connection to server" string) (warn "Lost connection to Tuntox network!")))
+                    (when (buffer-live-p (process-buffer proc))
+                      (with-current-buffer (process-buffer proc)
+                        (let ((moving (= (point) (process-mark proc))))
+                          (save-excursion
+                            (goto-char (process-mark proc))
+                            (insert string)
+                            (set-marker (process-mark proc) (point))
+                            (unless initialized
+                              (when (ignore-errors (search-backward "Friend request accepted"))
+                                (setq initialized t)
+                                (message "Connected to host over Tuntox.")
+                                (process-put (start-session :host "127.0.0.1" :service port)
+                                             'tuntox-process proc))))
+                          (if moving (goto-char (process-mark proc)))))))))
                nil))
             (t (error "Unknown protocol \"%s\"" url-type)))
       (push new-session crdt--session-list)
