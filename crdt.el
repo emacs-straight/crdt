@@ -2081,10 +2081,11 @@ Handle received STRING from PROCESS."
                  (process-get process 'crdt--downgrade-continuation))
             ;; This should only happens when we are in the middle of TLS handshake
             (funcall (process-get process 'crdt--downgrade-continuation))
-          (when (process-get process 'tuntox-process)
-            (process-send-string
-             process
-             (crdt--format-message `(leave ,(crdt--session-local-id session)))))
+          (with-demoted-errors "CRDT Error: %S"
+            (when (process-get process 'tuntox-process)
+              (process-send-string
+               (process-get process 'tuntox-process)
+               (crdt--format-message `(leave ,(crdt--session-local-id session))))))
           (crdt--stop-session session))))))
 
 ;;; UI commands
